@@ -1,6 +1,10 @@
-cmake_minimum_required(VERSION 3.31)
-project(code)
+# CMakeLists.txt for Lab 1
 
-set(CMAKE_CXX_STANDARD 20)
+# Create executable for lab_1
+add_executable(lab_1 main.cpp test_data.cpp)
 
-add_executable(code main.cpp)
+# Optional: Set output directory for the executable
+set_target_properties(lab_1 PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+

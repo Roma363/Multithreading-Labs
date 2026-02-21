@@ -1,3 +1,5 @@
+#include <iostream>
+
 struct Test1 {
     static constexpr std::size_t n = 5;
     static constexpr std::size_t m = 10;
