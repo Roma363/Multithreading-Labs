@@ -3,6 +3,8 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <iomanip>
+#include <windows.h>
 #include "matrix.h"
 
 using namespace std;
@@ -91,26 +93,85 @@ MinMax findMinMaxParallel(const Matrix& test, std::size_t numThreads) {
 }
 
 int main() {
-    const std::size_t rows = 1000;
-    const std::size_t cols = 5000;
-    Matrix test = Matrix::generateRandom(rows, cols, -1000, 1000);
+    // Налаштування кодування консолі для коректного відображення українського тексту
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
 
-    // Тест послідовного виконання
-    const auto seqStart = std::chrono::steady_clock::now();
-    MinMax seqResult = findMinMax(test);
-    const auto seqEnd = std::chrono::steady_clock::now();
-    const auto seqUs = std::chrono::duration_cast<std::chrono::microseconds>(seqEnd - seqStart).count();
-    cout << "Sequential result: min=" << seqResult.min << ", max=" << seqResult.max
-         << ", time=" << seqUs << " us" << '\n';
+    // Визначення кількості фізичних та логічних ядер
+    std::size_t physicalCores = std::thread::hardware_concurrency() / 2;
+    std::size_t logicalCores = std::thread::hardware_concurrency();
 
-    // Тест паралельного виконання
-    std::size_t numThreads = 16; // Кількість потоків можна змінювати
-    const auto parStart = std::chrono::steady_clock::now();
-    MinMax parResult = findMinMaxParallel(test, numThreads);
-    const auto parEnd = std::chrono::steady_clock::now();
-    const auto parUs = std::chrono::duration_cast<std::chrono::microseconds>(parEnd - parStart).count();
-    cout << "Parallel result (" << numThreads << " threads): min=" << parResult.min << ", max=" << parResult.max
-         << ", time=" << parUs << " us" << '\n';
+    // Якщо не вдалося отримати інформацію, використовуємо значення з протоколу
+    if (physicalCores == 0) {
+        physicalCores = 10;
+    }
+    if (logicalCores == 0) {
+        logicalCores = 16;
+    }
+
+    cout << "===== ІНФОРМАЦІЯ ПРО СИСТЕМУ =====" << '\n';
+    cout << "Логічних ядер: " << logicalCores << '\n';
+    cout << "Фізичних ядер (приблизно): " << physicalCores << '\n';
+    cout << '\n';
+
+    // Конфігурація кількостей потоків для тестування
+    std::vector<std::size_t> threadConfigs = {
+        physicalCores / 2,           // 2-рази менше, ніж фізичних ядер
+        physicalCores,               // Рівно фізичним ядрам
+        logicalCores,                // Рівно логічним ядрам
+        logicalCores * 2,            // В 2 рази більше, ніж логічних ядер
+        logicalCores * 4,            // В 4 рази більше
+        logicalCores * 8,            // В 8 разів більше
+        logicalCores * 16            // В 16 разів більше
+    };
+
+    // Конфігурація розмірів даних для тестування
+    std::vector<std::pair<std::size_t, std::size_t>> dataSizes = {
+        {100, 10},
+        {100, 100},
+        {1000, 100},
+        {1000, 1000},
+        {1000, 10000},
+
+    };
+
+    // Основний цикл тестування
+    for (const auto& [rows, cols] : dataSizes) {
+        cout << "===== ТЕСТУВАННЯ З РОЗМІРНІСТЮ: " << rows << "x" << cols << " (елементів: " << (rows * cols) << ") =====" << '\n';
+
+        Matrix test = Matrix::generateRandom(rows, cols, -1000, 1000);
+
+        // Тест послідовного виконання
+        const auto seqStart = std::chrono::steady_clock::now();
+        MinMax seqResult = findMinMax(test);
+        const auto seqEnd = std::chrono::steady_clock::now();
+        const auto seqUs = std::chrono::duration_cast<std::chrono::microseconds>(seqEnd - seqStart).count();
+        double seqMs = seqUs / 1000.0;
+
+        cout << "Послідовне виконання: " << fixed << setprecision(3) << setw(10) << seqMs << " ms"  << '\n';
+
+        // Тест паралельного виконання з різною кількістю потоків
+        for (std::size_t numThreads : threadConfigs) {
+            const auto parStart = std::chrono::steady_clock::now();
+            MinMax parResult = findMinMaxParallel(test, numThreads);
+            const auto parEnd = std::chrono::steady_clock::now();
+            const auto parUs = std::chrono::duration_cast<std::chrono::microseconds>(parEnd - parStart).count();
+            double parMs = parUs / 1000.0;
+
+            double speedup = seqMs / parMs;
+            cout << "Потоків: " << setw(2) << numThreads << " | Час: " << fixed << setprecision(3) << setw(10) << parMs << " ms | "
+                 << "Прискорення: " << setw(6) << fixed << setprecision(3) << speedup << "x";
+
+            // Перевірка коректності результатів
+            if (parResult.min == seqResult.min && parResult.max == seqResult.max) {
+                cout << " [OK]" << '\n';
+            } else {
+                cout << " [ПОМИЛКА!]" << '\n';
+            }
+        }
+
+        cout << '\n';
+    }
 
     return 0;
 }
