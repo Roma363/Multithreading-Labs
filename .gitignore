@@ -34,13 +34,6 @@ build.ninja
 *.pdb
 *.ilk
 
-# Visual Studio Code
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-
 # Windows
 Thumbs.db
 ehthumbs.db
