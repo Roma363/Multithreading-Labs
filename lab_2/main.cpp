@@ -39,13 +39,12 @@ MinResult findMinAndCount(const Array& arr) {
 }
 
 // Багатопоточний варіант з використанням блокуючого примітиву синхронізації (м'ютекс)
-MinResult findMinAndCountParallel(const Array& arr, size_t threadCount) {
+MinResult findMinAndCountParallelMutex(const Array& arr, size_t threadCount) {
     if (arr.size == 0) {
         return {0, 0};
     }
 
-    MinResult globalResult = {0, 0};
-    bool isGlobalResultInitialized = false;
+    MinResult globalResult = {INT_MAX, 0};
     mutex resultMutex;
     vector<thread> threads;
     threads.reserve(threadCount);
@@ -58,31 +57,19 @@ MinResult findMinAndCountParallel(const Array& arr, size_t threadCount) {
         const size_t extra = threadIndex < remainder ? 1 : 0;
         const size_t blockEnd = blockStart + blockSize + extra;
 
-        threads.emplace_back([&arr, &globalResult, &isGlobalResultInitialized, &resultMutex, blockStart, blockEnd]() {
+        threads.emplace_back([&arr, &globalResult, &resultMutex, blockStart, blockEnd]() {
             if (blockStart >= blockEnd) {
                 return;
             }
 
-            // Пошук локального мінімуму
-            int localMin = arr.data[blockStart];
-            size_t localCount = 1;
-            for (size_t i = blockStart + 1; i < blockEnd; ++i) {
-                if (arr.data[i] < localMin) {
-                    localMin = arr.data[i];
-                    localCount = 1;
-                } else if (arr.data[i] == localMin) {
-                    localCount++;
+            for (size_t i = blockStart; i < blockEnd; ++i) {
+                lock_guard<mutex> lock(resultMutex);
+                if (arr.data[i] < globalResult.minValue) {
+                    globalResult.minValue = arr.data[i];
+                    globalResult.count = 1;
+                } else if (arr.data[i] == globalResult.minValue) {
+                    globalResult.count++;
                 }
-            }
-
-            // Блокування м'ютекса для оновлення глобального результату
-            lock_guard<mutex> lock(resultMutex);
-            if (!isGlobalResultInitialized || localMin < globalResult.minValue) {
-                globalResult.minValue = localMin;
-                globalResult.count = localCount;
-                isGlobalResultInitialized = true;
-            } else if (localMin == globalResult.minValue) {
-                globalResult.count += localCount;
             }
         });
 
@@ -126,29 +113,21 @@ MinResult findMinAndCountParallelAtomic(const Array& arr, size_t threadCount) {
         threads.emplace_back([&arr, &globalResult, blockStart, blockEnd]() {
             if (blockStart >= blockEnd) return;
 
-            // Пошук локального мінімуму та його кількості
-            int localMin = arr.data[blockStart];
-            size_t localCount = 1;
-            for (size_t i = blockStart + 1; i < blockEnd; ++i) {
-                if (arr.data[i] < localMin) {
-                    localMin = arr.data[i];
-                    localCount = 1;
-                } else if (arr.data[i] == localMin) {
-                    localCount++;
-                }
-            }
+            for (size_t i = blockStart; i < blockEnd; ++i) {
+                int value = arr.data[i];
+                int currentGlobalMin = globalResult.minValue.load(std::memory_order_relaxed);
 
-            // Атомарне оновлення глобального результату
-            int currentGlobalMin = globalResult.minValue.load(std::memory_order_relaxed);
-            while (localMin < currentGlobalMin) {
-                if (globalResult.minValue.compare_exchange_weak(currentGlobalMin, localMin, std::memory_order_release, std::memory_order_relaxed)) {
-                    globalResult.count.store(0, std::memory_order_relaxed);
-                    break;
+                while (value < currentGlobalMin) {
+                    if (globalResult.minValue.compare_exchange_weak(currentGlobalMin, value, std::memory_order_release, std::memory_order_relaxed)) {
+                        globalResult.count.store(1, std::memory_order_relaxed);
+                        goto next_iteration; // Перехід до наступного елементу
+                    }
                 }
-            }
 
-            if (localMin == globalResult.minValue.load(std::memory_order_acquire)) {
-                globalResult.count.fetch_add(localCount, std::memory_order_acq_rel);
+                if (value == globalResult.minValue.load(std::memory_order_acquire)) {
+                    globalResult.count.fetch_add(1, std::memory_order_acq_rel);
+                }
+                next_iteration:;
             }
         });
 
@@ -209,7 +188,7 @@ int main() {
 
         // Тест багатопотокового виконання
         const auto parStart = chrono::steady_clock::now();
-        MinResult parResult = findMinAndCountParallel(testArray, logicalCores);
+        MinResult parResult = findMinAndCountParallelMutex(testArray, logicalCores);
         const auto parEnd = chrono::steady_clock::now();
         const auto parUs = chrono::duration_cast<chrono::microseconds>(parEnd - parStart).count();
         double parMs = static_cast<double>(parUs) / 1000.0;
