@@ -135,7 +135,7 @@ bool handleStatusCommand(ClientState& state, socket_t clientFd) {
     return sendStatus(clientFd, state.status, minValue, maxValue, state.error);
 }
 
-bool handleClient(socket_t clientFd) {
+void handleClient(socket_t clientFd) {
     ClientState state;
     while (true) {
         MessageHeader header{};
@@ -168,7 +168,7 @@ bool handleClient(socket_t clientFd) {
     if (state.worker.joinable()) {
         state.worker.join();
     }
-    return true;
+    closeSocket(clientFd);
 }
 
 } // namespace
@@ -228,11 +228,8 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        bool ok = handleClient(clientFd);
-        if (!ok) {
-            std::cerr << "[server] handled client with errors" << std::endl;
-        }
-        closeSocket(clientFd);
+        std::thread clientThread(handleClient, clientFd);
+        clientThread.detach();
     }
 
     closeSocket(serverFd);
