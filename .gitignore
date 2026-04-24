@@ -38,3 +38,6 @@ build.ninja
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Lab-specific docs
+lab_4/README.md
