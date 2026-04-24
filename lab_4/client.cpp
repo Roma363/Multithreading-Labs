@@ -1,7 +1,9 @@
 #include <cstdint>
+#include <chrono>
 #include <iostream>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "protocol.h"
@@ -24,6 +26,28 @@ std::vector<std::int32_t> generateMatrix(std::size_t rows, std::size_t cols, std
     }
 
     return data;
+}
+
+bool recvExpected(socket_t sockFd, std::uint16_t expectedType, std::vector<std::uint8_t>& payload) {
+    MessageHeader header{};
+    if (!recvMessage(sockFd, header, payload)) {
+        return false;
+    }
+    if (header.type == MSG_ERROR) {
+        std::size_t offset = 0;
+        std::uint32_t code = 0;
+        if (readU32(payload, offset, code)) {
+            std::cerr << "[client] server error code: " << code << std::endl;
+        } else {
+            std::cerr << "[client] server error" << std::endl;
+        }
+        return false;
+    }
+    if (header.type != expectedType) {
+        std::cerr << "[client] unexpected response type: " << header.type << std::endl;
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -85,13 +109,17 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    RequestHeader header{};
-    header.rows = toNetworkU32(rows);
-    header.cols = toNetworkU32(cols);
-    header.numThreads = toNetworkU32(numThreads);
+    std::vector<std::uint8_t> dataPayload;
+    dataPayload.reserve(sizeof(std::uint32_t) * 3 + matrix.size() * sizeof(std::int32_t));
+    appendU32(dataPayload, rows);
+    appendU32(dataPayload, cols);
+    appendU32(dataPayload, numThreads);
+    for (const auto value : matrix) {
+        appendI32(dataPayload, value);
+    }
 
-    if (!sendAll(sockFd, &header, sizeof(header))) {
-        std::cerr << "[client] failed to send header" << std::endl;
+    if (!sendMessage(sockFd, MSG_DATA, dataPayload.data(), static_cast<std::uint32_t>(dataPayload.size()))) {
+        std::cerr << "[client] failed to send DATA" << std::endl;
         closeSocket(sockFd);
     #ifdef _WIN32
         WSACleanup();
@@ -99,13 +127,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::vector<std::uint32_t> raw(matrix.size());
-    for (std::size_t i = 0; i < matrix.size(); ++i) {
-        raw[i] = toNetworkI32(matrix[i]);
-    }
-
-    if (!sendAll(sockFd, raw.data(), raw.size() * sizeof(std::uint32_t))) {
-        std::cerr << "[client] failed to send matrix payload" << std::endl;
+    std::vector<std::uint8_t> payload;
+    if (!recvExpected(sockFd, MSG_DATA_OK, payload)) {
         closeSocket(sockFd);
     #ifdef _WIN32
         WSACleanup();
@@ -113,9 +136,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    ResponseHeader response{};
-    if (!recvAll(sockFd, &response, sizeof(response))) {
-        std::cerr << "[client] failed to receive response" << std::endl;
+    if (!sendMessage(sockFd, MSG_START, nullptr, 0)) {
+        std::cerr << "[client] failed to send START" << std::endl;
         closeSocket(sockFd);
     #ifdef _WIN32
         WSACleanup();
@@ -123,10 +145,47 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::int32_t minValue = fromNetworkI32(static_cast<std::uint32_t>(response.minValue));
-    std::int32_t maxValue = fromNetworkI32(static_cast<std::uint32_t>(response.maxValue));
+    if (!recvExpected(sockFd, MSG_START_OK, payload)) {
+        closeSocket(sockFd);
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
+        return 1;
+    }
 
-    std::cout << "[client] result: min=" << minValue << ", max=" << maxValue << std::endl;
+    while (true) {
+        if (!sendMessage(sockFd, MSG_STATUS, nullptr, 0)) {
+            std::cerr << "[client] failed to send STATUS" << std::endl;
+            break;
+        }
+
+        if (!recvExpected(sockFd, MSG_STATUS_RESP, payload)) {
+            break;
+        }
+
+        std::size_t offset = 0;
+        std::uint32_t status = 0;
+        std::int32_t minValue = 0;
+        std::int32_t maxValue = 0;
+        std::uint32_t error = 0;
+        if (!readU32(payload, offset, status) || !readI32(payload, offset, minValue) ||
+            !readI32(payload, offset, maxValue) || !readU32(payload, offset, error)) {
+            std::cerr << "[client] invalid STATUS response" << std::endl;
+            break;
+        }
+
+        if (status == STATUS_DONE) {
+            std::cout << "[client] result: min=" << minValue << ", max=" << maxValue << std::endl;
+            break;
+        }
+
+        if (status == STATUS_ERROR) {
+            std::cerr << "[client] server reported error: " << error << std::endl;
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 
 #ifdef _WIN32
     closeSocket(sockFd);
