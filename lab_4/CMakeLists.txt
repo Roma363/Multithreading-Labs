@@ -2,14 +2,17 @@
 
 # Create executables for lab_4
 add_executable(lab_4_server
-    server.cpp
+    cpp/src/server.cpp
 )
 
 add_executable(lab_4_client
-    client.cpp
+    cpp/src/client.cpp
 )
 
 foreach(target lab_4_server lab_4_client)
+    target_include_directories(${target} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include
+    )
     set_target_properties(${target} PROPERTIES
         CXX_STANDARD 11
         CXX_STANDARD_REQUIRED YES

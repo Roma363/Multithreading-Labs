@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"flag"
 	"fmt"
 	"math/rand"
 	"net"
@@ -102,20 +101,19 @@ func recvHeader(conn net.Conn) (MessageHeader, error) {
 }
 
 func main() {
-	host := flag.String("host", "127.0.0.1", "server host")
-	port := flag.Int("port", 5000, "server port")
-	rows := flag.Uint("rows", 100, "rows")
-	cols := flag.Uint("cols", 100, "cols")
-	threads := flag.Uint("threads", 4, "num threads")
-	flag.Parse()
+	host := "127.0.0.1"
+	port := 5000
+	rows := uint32(100)
+	cols := uint32(100)
+	threads := uint32(4)
 
-	matrix := make([]int32, (*rows)*(*cols))
+	matrix := make([]int32, int(rows*cols))
 	rand.Seed(time.Now().UnixNano())
 	for i := range matrix {
 		matrix[i] = rand.Int31n(2001) - 1000
 	}
 
-	addr := fmt.Sprintf("%s:%d", *host, *port)
+	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		fmt.Println("[go-client] connect error:", err)
@@ -123,7 +121,7 @@ func main() {
 	}
 	defer conn.Close()
 
-	if err := sendData(conn, uint32(*rows), uint32(*cols), uint32(*threads), matrix); err != nil {
+	if err := sendData(conn, rows, cols, threads, matrix); err != nil {
 		fmt.Println("[go-client] send DATA error:", err)
 		return
 	}

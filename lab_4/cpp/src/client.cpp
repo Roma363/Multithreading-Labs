@@ -13,7 +13,8 @@ namespace {
 constexpr std::uint16_t kDefaultPort = 5000;
 
 void printUsage(const char* exeName) {
-    std::cout << "Usage: " << exeName << " <host> <rows> <cols> [numThreads] [port]\n";
+    std::cout << "Usage: " << exeName << " (no arguments)\n";
+    std::cout << "Defaults: host=127.0.0.1 rows=100 cols=100 numThreads=4 port=5000\n";
 }
 
 std::vector<std::int32_t> generateMatrix(std::size_t rows, std::size_t cols, std::int32_t minValue, std::int32_t maxValue) {
@@ -53,16 +54,16 @@ bool recvExpected(socket_t sockFd, std::uint16_t expectedType, std::vector<std::
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 4) {
+    if (argc > 1) {
         printUsage(argv[0]);
         return 1;
     }
 
-    std::string host = argv[1];
-    std::uint32_t rows = static_cast<std::uint32_t>(std::stoul(argv[2]));
-    std::uint32_t cols = static_cast<std::uint32_t>(std::stoul(argv[3]));
-    std::uint32_t numThreads = (argc >= 5) ? static_cast<std::uint32_t>(std::stoul(argv[4])) : 4;
-    std::uint16_t port = (argc >= 6) ? static_cast<std::uint16_t>(std::stoul(argv[5])) : kDefaultPort;
+    std::string host = "127.0.0.1";
+    std::uint32_t rows = 100;
+    std::uint32_t cols = 100;
+    std::uint32_t numThreads = 4;
+    std::uint16_t port = kDefaultPort;
 
     if (rows == 0 || cols == 0) {
         std::cerr << "[client] rows and cols must be > 0" << std::endl;
