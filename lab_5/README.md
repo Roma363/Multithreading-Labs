@@ -1,10 +1,11 @@
-# Lab 5 (Steps 1–2)
+# Lab 5: Non-blocking HTTP Server
 
-HTTP/1.1 static file server using raw sockets (blocking, multi-client).
+Event-driven HTTP/1.1 static file server using raw sockets and Linux epoll.
 
-## Build (WSL Ubuntu)
+## Build
 
 ```bash
+cd lab_5
 cmake -S . -B build
 cmake --build build
 ```
@@ -15,9 +16,20 @@ cmake --build build
 ./build/bin/lab_5 --port=8080 --root=www
 ```
 
-Then open: http://localhost:8080/
+Open: http://localhost:8080/ or http://localhost:8080/second_page.html
 
-## Notes
-- Implemented GET parsing and HTTP/1.1 response.
-- Root path `/` maps to `index.html` in the `www` folder.
-- Additional pages and extended error handling will be added in later steps.
+## Load Testing
+
+Install Locust:
+```bash
+pip install -r requirements.txt
+```
+
+Run test:
+```bash
+python3 scripts/run_load_test.py --host=localhost --port=8080 --users=100 --time=60
+```
+
+Results saved to `scripts/results_stats.csv`.
+
+

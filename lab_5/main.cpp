@@ -1,41 +1,34 @@
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
 
 constexpr int kDefaultPort = 8080;
 constexpr size_t kMaxRequestSize = 8192;
+constexpr int kMaxEvents = 256;
+constexpr size_t kBufferSize = 4096;
 
 std::string to_lower(std::string value) {
     for (char &ch : value) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
     return value;
-}
-
-bool send_all(int client_fd, const std::string &data) {
-    size_t total_sent = 0;
-    while (total_sent < data.size()) {
-        ssize_t sent = send(client_fd, data.data() + total_sent, data.size() - total_sent, 0);
-        if (sent <= 0) {
-            return false;
-        }
-        total_sent += static_cast<size_t>(sent);
-    }
-    return true;
 }
 
 std::string get_content_type(const std::filesystem::path &path) {
@@ -45,25 +38,6 @@ std::string get_content_type(const std::filesystem::path &path) {
     if (ext == ".css") return "text/css; charset=utf-8";
     if (ext == ".js") return "application/javascript; charset=utf-8";
     return "application/octet-stream";
-}
-
-bool read_request(int client_fd, std::string &out) {
-    out.clear();
-    std::vector<char> buffer(1024);
-    while (out.size() < kMaxRequestSize) {
-        ssize_t bytes = recv(client_fd, buffer.data(), buffer.size(), 0);
-        if (bytes < 0) {
-            return false;
-        }
-        if (bytes == 0) {
-            break;
-        }
-        out.append(buffer.data(), static_cast<size_t>(bytes));
-        if (out.find("\r\n\r\n") != std::string::npos) {
-            return true;
-        }
-    }
-    return !out.empty();
 }
 
 struct HttpRequest {
@@ -132,35 +106,40 @@ std::string sanitize_target(std::string target) {
     return target;
 }
 
-void handle_client(int client_fd, const std::filesystem::path &root) {
-    std::string raw_request;
-    if (!read_request(client_fd, raw_request)) {
-        close(client_fd);
-        return;
-    }
+struct ClientState {
+    std::string request_buffer;
+    std::deque<std::string> response_queue;
+    bool request_complete = false;
+    size_t response_sent = 0;
 
+    bool is_request_complete() const {
+        return request_buffer.find("\r\n\r\n") != std::string::npos;
+    }
+};
+
+int set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+void handle_client_request(int client_fd, ClientState &state, const std::filesystem::path &root) {
     HttpRequest request;
-    if (!parse_request(raw_request, request)) {
-        std::string body = "Bad Request";
-        auto response = build_response(400, "Bad Request", body, "text/plain; charset=utf-8");
-        send_all(client_fd, response);
-        close(client_fd);
+    if (!parse_request(state.request_buffer, request)) {
+        auto response = build_response(400, "Bad Request", "Bad Request", "text/plain; charset=utf-8");
+        state.response_queue.push_back(response);
         return;
     }
 
     if (request.method != "GET") {
-        std::string body = "Method Not Allowed";
-        auto response = build_response(405, "Method Not Allowed", body, "text/plain; charset=utf-8");
-        send_all(client_fd, response);
-        close(client_fd);
+        auto response = build_response(405, "Method Not Allowed", "Method Not Allowed", "text/plain; charset=utf-8");
+        state.response_queue.push_back(response);
         return;
     }
 
     if (request.version != "HTTP/1.1") {
-        std::string body = "HTTP Version Not Supported";
-        auto response = build_response(505, "HTTP Version Not Supported", body, "text/plain; charset=utf-8");
-        send_all(client_fd, response);
-        close(client_fd);
+        auto response = build_response(505, "HTTP Version Not Supported", "HTTP Version Not Supported", "text/plain; charset=utf-8");
+        state.response_queue.push_back(response);
         return;
     }
 
@@ -170,10 +149,8 @@ void handle_client(int client_fd, const std::filesystem::path &root) {
     }
 
     if (target.find("..") != std::string::npos) {
-        std::string body = "Bad Request";
-        auto response = build_response(400, "Bad Request", body, "text/plain; charset=utf-8");
-        send_all(client_fd, response);
-        close(client_fd);
+        auto response = build_response(400, "Bad Request", "Bad Request", "text/plain; charset=utf-8");
+        state.response_queue.push_back(response);
         return;
     }
 
@@ -181,10 +158,8 @@ void handle_client(int client_fd, const std::filesystem::path &root) {
 
     std::ifstream file(file_path, std::ios::binary);
     if (!file) {
-        std::string body = "Not Found";
-        auto response = build_response(404, "Not Found", body, "text/plain; charset=utf-8");
-        send_all(client_fd, response);
-        close(client_fd);
+        auto response = build_response(404, "Not Found", "Not Found", "text/plain; charset=utf-8");
+        state.response_queue.push_back(response);
         return;
     }
 
@@ -194,19 +169,7 @@ void handle_client(int client_fd, const std::filesystem::path &root) {
     std::string content_type = get_content_type(file_path);
 
     auto response = build_response(200, "OK", body, content_type);
-    send_all(client_fd, response);
-    close(client_fd);
-}
-
-int parse_port(const std::string &value, int fallback) {
-    try {
-        int port = std::stoi(value);
-        if (port > 0 && port <= 65535) {
-            return port;
-        }
-    } catch (...) {
-    }
-    return fallback;
+    state.response_queue.push_back(response);
 }
 
 }  // namespace
@@ -218,7 +181,10 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg.rfind("--port=", 0) == 0) {
-            port = parse_port(arg.substr(7), port);
+            try {
+                port = std::stoi(arg.substr(7));
+            } catch (...) {
+            }
         } else if (arg.rfind("--root=", 0) == 0) {
             root = arg.substr(7);
         }
@@ -233,6 +199,12 @@ int main(int argc, char *argv[]) {
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         std::cerr << "setsockopt failed: " << std::strerror(errno) << "\n";
+        close(server_fd);
+        return 1;
+    }
+
+    if (set_nonblocking(server_fd) < 0) {
+        std::cerr << "fcntl failed: " << std::strerror(errno) << "\n";
         close(server_fd);
         return 1;
     }
@@ -254,20 +226,149 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    std::cout << "HTTP server listening on port " << port << " (root: " << root << ")\n";
-
-    while (true) {
-        sockaddr_in client_addr{};
-        socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-        if (client_fd < 0) {
-            std::cerr << "accept failed: " << std::strerror(errno) << "\n";
-            continue;
-        }
-
-        std::thread([client_fd, root]() { handle_client(client_fd, root); }).detach();
+    int epoll_fd = epoll_create1(0);
+    if (epoll_fd < 0) {
+        std::cerr << "epoll_create1 failed: " << std::strerror(errno) << "\n";
+        close(server_fd);
+        return 1;
     }
 
+    epoll_event ev{};
+    ev.events = EPOLLIN;
+    ev.data.fd = server_fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) < 0) {
+        std::cerr << "epoll_ctl failed: " << std::strerror(errno) << "\n";
+        close(epoll_fd);
+        close(server_fd);
+        return 1;
+    }
+
+    std::map<int, ClientState> clients;
+    std::vector<epoll_event> events(kMaxEvents);
+
+    std::cout << "Non-blocking HTTP server listening on port " << port << " (root: " << root << ")\n";
+
+    while (true) {
+        int nfds = epoll_wait(epoll_fd, events.data(), kMaxEvents, -1);
+        if (nfds < 0) {
+            if (errno == EINTR) continue;
+            std::cerr << "epoll_wait failed: " << std::strerror(errno) << "\n";
+            break;
+        }
+
+        for (int i = 0; i < nfds; ++i) {
+            int fd = events[i].data.fd;
+
+            if (fd == server_fd) {
+                // Accept new connections
+                while (true) {
+                    sockaddr_in client_addr{};
+                    socklen_t client_len = sizeof(client_addr);
+                    int client_fd = accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+                    if (client_fd < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            break;
+                        }
+                        std::cerr << "accept failed: " << std::strerror(errno) << "\n";
+                        break;
+                    }
+
+                    if (set_nonblocking(client_fd) < 0) {
+                        std::cerr << "fcntl failed: " << std::strerror(errno) << "\n";
+                        close(client_fd);
+                        continue;
+                    }
+
+                    clients[client_fd] = ClientState{};
+
+                    epoll_event client_ev{};
+                    client_ev.events = EPOLLIN;
+                    client_ev.data.fd = client_fd;
+                    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &client_ev) < 0) {
+                        std::cerr << "epoll_ctl failed: " << std::strerror(errno) << "\n";
+                        close(client_fd);
+                        clients.erase(client_fd);
+                    }
+                }
+            } else {
+                // Handle client I/O
+                auto it = clients.find(fd);
+                if (it == clients.end()) continue;
+
+                ClientState &state = it->second;
+
+                if (events[i].events & EPOLLIN && !state.request_complete) {
+                    std::vector<char> buffer(kBufferSize);
+                    while (true) {
+                        ssize_t bytes = recv(fd, buffer.data(), buffer.size(), 0);
+                        if (bytes < 0) {
+                            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                break;
+                            }
+                            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+                            close(fd);
+                            clients.erase(it);
+                            break;
+                        }
+                        if (bytes == 0) {
+                            // Connection closed
+                            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+                            close(fd);
+                            clients.erase(it);
+                            break;
+                        }
+                        state.request_buffer.append(buffer.data(), static_cast<size_t>(bytes));
+                        if (state.request_buffer.size() > kMaxRequestSize) {
+                            auto resp = build_response(413, "Payload Too Large", "Payload Too Large", "text/plain; charset=utf-8");
+                            state.response_queue.push_back(resp);
+                            state.request_complete = true;
+                            break;
+                        }
+                    }
+
+                    if (it != clients.end() && state.is_request_complete()) {
+                        handle_client_request(fd, state, root);
+                        state.request_complete = true;
+
+                        epoll_event client_ev{};
+                        client_ev.events = EPOLLOUT;
+                        client_ev.data.fd = fd;
+                        epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &client_ev);
+                    }
+                }
+
+                if (events[i].events & EPOLLOUT && state.request_complete && !state.response_queue.empty()) {
+                    auto &response = state.response_queue.front();
+                    while (state.response_sent < response.size()) {
+                        ssize_t sent = send(fd, response.data() + state.response_sent, response.size() - state.response_sent, 0);
+                        if (sent < 0) {
+                            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                break;
+                            }
+                            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+                            close(fd);
+                            clients.erase(it);
+                            break;
+                        }
+                        state.response_sent += static_cast<size_t>(sent);
+                    }
+
+                    if (it != clients.end() && state.response_sent >= response.size()) {
+                        state.response_queue.pop_front();
+                        if (state.response_queue.empty()) {
+                            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+                            close(fd);
+                            clients.erase(it);
+                        } else {
+                            state.response_sent = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    close(epoll_fd);
     close(server_fd);
     return 0;
 }
