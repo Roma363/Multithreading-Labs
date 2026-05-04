@@ -18,18 +18,4 @@ cmake --build build
 
 Open: http://localhost:8080/ or http://localhost:8080/second_page.html
 
-## Load Testing
-
-Install Locust:
-```bash
-pip install -r requirements.txt
-```
-
-Run test:
-```bash
-python3 scripts/run_load_test.py --host=localhost --port=8080 --users=100 --time=60
-```
-
-Results saved to `scripts/results_stats.csv`.
-
 
