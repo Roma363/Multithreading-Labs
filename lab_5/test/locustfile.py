@@ -22,10 +22,11 @@ class Lab5LoadTester(HttpUser):
     def test_404_not_found(self):
         """Тестування коректної обробки неіснуючої сторінки"""
         # catch_response=True дозволяє нам самостійно вирішити, чи був запит успішним
-        with self.client.get("/index.html", catch_response=True) as response:
+        with self.client.get("/fake_page.html", catch_response=True) as response:
             if response.status_code == 404:
                 # Сервер правильно повернув 404, тому для нас це "успішний" тест
                 response.success()
             else:
                 # Якщо сервер повернув щось інше (наприклад, 200 або впав), фіксуємо помилку
                 response.failure(f"Expected 404, but got {response.status_code}")
+
