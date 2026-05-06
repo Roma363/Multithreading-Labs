@@ -1,24 +1,4 @@
-# Lab 5 (HTTP server)
-
-Ця лабораторна — багатопотоковий HTTP сервер на WinSock + Win32 threads. Статичні файли — у public/.
-
-## Структура папок
-
-```
-lab_5/
-  CMakeLists.txt
-  README.md
-  src/           # основний код сервера
-    server.cpp
-    cache.cpp
-  include/       # заголовочні файли
-    cache.h
-  public/        # статичні файли для HTTP
-    index.html
-    page2.html
-  tests/         # всі тести (locust, майбутні автотести)
-    locustfile.py
-```
+# Lab 5
 
 ## Збірка (CMake)
 
@@ -32,6 +12,7 @@ cmake --build "D:\Multithreading-Labs\build"
 ```powershell
 "D:\Multithreading-Labs\build\lab_5_server.exe"
 ```
+Open: http://localhost:8080/ or http://localhost:8080/second_page.html
 
 ## Тестування
 
@@ -41,7 +22,3 @@ cmake --build "D:\Multithreading-Labs\build"
 cd ../tests
 locust -f locustfile.py
 ```
-
-## Примітки
-- Після збірки public/ автоматично копіюється у спільну build/.
-- Сервер WinSock+Win32, кросплатформеності немає.
