@@ -179,24 +179,24 @@ int main(int argc, char** argv) {
         port = static_cast<std::uint16_t>(std::stoi(argv[1]));
     }
 
-#ifdef _WIN32
     WSADATA wsaData{};
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         logError("WSAStartup failed");
         return 1;
     }
-#endif
 
     socket_t serverFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverFd < 0) {
+    if (serverFd == INVALID_SOCKET) {
         logError("socket creation failed");
+        WSACleanup();
         return 1;
     }
 
     int opt = 1;
-    if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&opt), sizeof(opt)) < 0) {
+    if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&opt), sizeof(opt)) == SOCKET_ERROR) {
         logError("setsockopt failed");
         closeSocket(serverFd);
+        WSACleanup();
         return 1;
     }
 
@@ -205,15 +205,17 @@ int main(int argc, char** argv) {
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);
 
-    if (bind(serverFd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0) {
+    if (bind(serverFd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
         logError("bind failed");
         closeSocket(serverFd);
+        WSACleanup();
         return 1;
     }
 
-    if (listen(serverFd, 8) < 0) {
+    if (listen(serverFd, 8) == SOCKET_ERROR) {
         logError("listen failed");
         closeSocket(serverFd);
+        WSACleanup();
         return 1;
     }
 
@@ -221,9 +223,9 @@ int main(int argc, char** argv) {
 
     while (true) {
         sockaddr_in clientAddr{};
-        socklen_t clientLen = sizeof(clientAddr);
+        int clientLen = sizeof(clientAddr);
         socket_t clientFd = accept(serverFd, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
-        if (clientFd < 0) {
+        if (clientFd == INVALID_SOCKET) {
             logError("accept failed");
             continue;
         }
@@ -233,8 +235,6 @@ int main(int argc, char** argv) {
     }
 
     closeSocket(serverFd);
-#ifdef _WIN32
     WSACleanup();
-#endif
     return 0;
 }

@@ -70,22 +70,18 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-#ifdef _WIN32
     WSADATA wsaData{};
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         std::cerr << "[client] WSAStartup failed" << std::endl;
         return 1;
     }
-#endif
 
     std::vector<std::int32_t> matrix = generateMatrix(rows, cols, -1000, 1000);
 
     socket_t sockFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockFd < 0) {
+    if (sockFd == INVALID_SOCKET) {
         std::cerr << "[client] socket creation failed" << std::endl;
-#ifdef _WIN32
         WSACleanup();
-#endif
         return 1;
     }
 
@@ -95,18 +91,14 @@ int main(int argc, char** argv) {
     if (inet_pton(AF_INET, host.c_str(), &serverAddr.sin_addr) <= 0) {
         std::cerr << "[client] invalid server address" << std::endl;
         closeSocket(sockFd);
-    #ifdef _WIN32
         WSACleanup();
-    #endif
         return 1;
     }
 
-    if (connect(sockFd, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) < 0) {
+    if (connect(sockFd, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) == SOCKET_ERROR) {
         std::cerr << "[client] connect failed" << std::endl;
         closeSocket(sockFd);
-    #ifdef _WIN32
         WSACleanup();
-    #endif
         return 1;
     }
 
@@ -122,35 +114,27 @@ int main(int argc, char** argv) {
     if (!sendMessage(sockFd, MSG_DATA, dataPayload.data(), static_cast<std::uint32_t>(dataPayload.size()))) {
         std::cerr << "[client] failed to send DATA" << std::endl;
         closeSocket(sockFd);
-    #ifdef _WIN32
         WSACleanup();
-    #endif
         return 1;
     }
 
     std::vector<std::uint8_t> payload;
     if (!recvExpected(sockFd, MSG_DATA_OK, payload)) {
         closeSocket(sockFd);
-    #ifdef _WIN32
         WSACleanup();
-    #endif
         return 1;
     }
 
     if (!sendMessage(sockFd, MSG_START, nullptr, 0)) {
         std::cerr << "[client] failed to send START" << std::endl;
         closeSocket(sockFd);
-    #ifdef _WIN32
         WSACleanup();
-    #endif
         return 1;
     }
 
     if (!recvExpected(sockFd, MSG_START_OK, payload)) {
         closeSocket(sockFd);
-    #ifdef _WIN32
         WSACleanup();
-    #endif
         return 1;
     }
 
@@ -188,11 +172,7 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-#ifdef _WIN32
     closeSocket(sockFd);
     WSACleanup();
-#else
-    closeSocket(sockFd);
-#endif
     return 0;
 }

@@ -4,16 +4,9 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#else
-#include <arpa/inet.h>
-#include <errno.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
+
 
 constexpr std::uint32_t kProtocolMagic = 0x4D4D5831; // "MMX1"
 constexpr std::uint16_t kProtocolVersion = 1;
@@ -76,7 +69,6 @@ inline std::int32_t fromNetworkI32(std::uint32_t value) {
     return static_cast<std::int32_t>(ntohl(value));
 }
 
-#ifdef _WIN32
 using socket_t = SOCKET;
 inline int closeSocket(socket_t socketFd) {
     return closesocket(socketFd);
@@ -84,15 +76,6 @@ inline int closeSocket(socket_t socketFd) {
 inline int getSocketError() {
     return WSAGetLastError();
 }
-#else
-using socket_t = int;
-inline int closeSocket(socket_t socketFd) {
-    return close(socketFd);
-}
-inline int getSocketError() {
-    return errno;
-}
-#endif
 
 inline bool sendAll(socket_t socketFd, const void* data, std::size_t size) {
     const std::uint8_t* buffer = static_cast<const std::uint8_t*>(data);
