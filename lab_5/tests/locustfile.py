@@ -13,6 +13,4 @@ class ServerTester(HttpUser):
         
     @task(1)
     def load_404(self):
-        with self.client.get("/404", catch_response=True) as response:
-            if response.status_code == 404:
-                response.success()
+        self.client.get("/404")
