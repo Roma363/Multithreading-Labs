@@ -105,18 +105,21 @@ inline bool recvAll(socket_t socketFd, void* data, std::size_t size) {
     return true;
 }
 
+// Додає беззнакове 32-бітне число до буфера в мережевому форматі (big-endian)
 inline void appendU32(std::vector<std::uint8_t>& buffer, std::uint32_t value) {
     std::uint32_t net = toNetworkU32(value);
     const std::uint8_t* ptr = reinterpret_cast<const std::uint8_t*>(&net);
     buffer.insert(buffer.end(), ptr, ptr + sizeof(net));
 }
 
+// Додає знакове 32-бітне число до буфера в мережевому форматі (big-endian)
 inline void appendI32(std::vector<std::uint8_t>& buffer, std::int32_t value) {
     std::uint32_t net = toNetworkI32(value);
     const std::uint8_t* ptr = reinterpret_cast<const std::uint8_t*>(&net);
     buffer.insert(buffer.end(), ptr, ptr + sizeof(net));
 }
 
+// Читає беззнакове 32-бітне число з буфера, конвертує з мережевого формату
 inline bool readU32(const std::vector<std::uint8_t>& buffer, std::size_t& offset, std::uint32_t& value) {
     if (offset + sizeof(std::uint32_t) > buffer.size()) {
         return false;
@@ -128,6 +131,7 @@ inline bool readU32(const std::vector<std::uint8_t>& buffer, std::size_t& offset
     return true;
 }
 
+// Читає знакове 32-бітне число з буфера, конвертує з мережевого формату
 inline bool readI32(const std::vector<std::uint8_t>& buffer, std::size_t& offset, std::int32_t& value) {
     if (offset + sizeof(std::uint32_t) > buffer.size()) {
         return false;
@@ -139,19 +143,23 @@ inline bool readI32(const std::vector<std::uint8_t>& buffer, std::size_t& offset
     return true;
 }
 
+// Відправляє повідомлення з заголовком та корисним навантаженням через сокет
 inline bool sendMessage(socket_t socketFd, std::uint16_t type, const void* payload, std::uint32_t length) {
+    // Готує заголовок з магічним числом, версією, типом та розміром
     MessageHeader header{};
     header.magic = kProtocolMagic;
     header.version = kProtocolVersion;
     header.type = type;
     header.length = length;
 
+    // Конвертує заголовок в мережевий формат (big-endian)
     MessageHeader netHeader{};
     netHeader.magic = toNetworkU32(header.magic);
     netHeader.version = toNetworkU16(header.version);
     netHeader.type = toNetworkU16(header.type);
     netHeader.length = toNetworkU32(header.length);
 
+    // Відправляє заголовок, потім корисне навантаження
     if (!sendAll(socketFd, &netHeader, sizeof(netHeader))) {
         return false;
     }
@@ -161,17 +169,21 @@ inline bool sendMessage(socket_t socketFd, std::uint16_t type, const void* paylo
     return sendAll(socketFd, payload, length);
 }
 
+// Отримує повідомлення з сокета, валідує заголовок та читає корисне навантаження
 inline bool recvMessage(socket_t socketFd, MessageHeader& header, std::vector<std::uint8_t>& payload) {
+    // Приймає заголовок з сокета
     MessageHeader netHeader{};
     if (!recvAll(socketFd, &netHeader, sizeof(netHeader))) {
         return false;
     }
 
+    // Конвертує заголовок зі мережевого формату
     header.magic = fromNetworkU32(netHeader.magic);
     header.version = fromNetworkU16(netHeader.version);
     header.type = fromNetworkU16(netHeader.type);
     header.length = fromNetworkU32(netHeader.length);
 
+    // Валідує магічне число, версію та розмір корисного навантаження
     if (header.magic != kProtocolMagic || header.version != kProtocolVersion) {
         return false;
     }
@@ -179,6 +191,7 @@ inline bool recvMessage(socket_t socketFd, MessageHeader& header, std::vector<st
         return false;
     }
 
+    // Приймає корисне навантаження зі змінним розміром
     payload.clear();
     if (header.length == 0) {
         return true;

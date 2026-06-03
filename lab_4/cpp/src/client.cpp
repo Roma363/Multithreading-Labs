@@ -17,6 +17,7 @@ void printUsage(const char* exeName) {
     std::cout << "Defaults: host=127.0.0.1 rows=100 cols=100 numThreads=4 port=5000\n";
 }
 
+// Генерує матрицю зі випадковими числами в діапазоні [minValue, maxValue]
 std::vector<std::int32_t> generateMatrix(std::size_t rows, std::size_t cols, std::int32_t minValue, std::int32_t maxValue) {
     std::vector<std::int32_t> data(rows * cols);
     std::mt19937 rng(std::random_device{}());
@@ -29,11 +30,14 @@ std::vector<std::int32_t> generateMatrix(std::size_t rows, std::size_t cols, std
     return data;
 }
 
+// Отримує повідомлення та перевіряє, чи має очікуваний тип
 bool recvExpected(socket_t sockFd, std::uint16_t expectedType, std::vector<std::uint8_t>& payload) {
+    // Отримує повідомлення з сокета
     MessageHeader header{};
     if (!recvMessage(sockFd, header, payload)) {
         return false;
     }
+    // Перевіряє, чи не помилка від сервера
     if (header.type == MSG_ERROR) {
         std::size_t offset = 0;
         std::uint32_t code = 0;
@@ -44,6 +48,7 @@ bool recvExpected(socket_t sockFd, std::uint16_t expectedType, std::vector<std::
         }
         return false;
     }
+    // Перевіряє, чи тип повідомлення збігається з очікуваним
     if (header.type != expectedType) {
         std::cerr << "[client] unexpected response type: " << header.type << std::endl;
         return false;
@@ -59,25 +64,30 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Встановлює параметри клієнта
     std::string host = "127.0.0.1";
     std::uint32_t rows = 100;
     std::uint32_t cols = 100;
     std::uint32_t numThreads = 4;
     std::uint16_t port = kDefaultPort;
 
+    // Перевіряє валідність розмірів матриці
     if (rows == 0 || cols == 0) {
         std::cerr << "[client] rows and cols must be > 0" << std::endl;
         return 1;
     }
 
+    // Ініціалізує Windows Sockets
     WSADATA wsaData{};
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         std::cerr << "[client] WSAStartup failed" << std::endl;
         return 1;
     }
 
+    // Генерує матрицю зі випадковими числами
     std::vector<std::int32_t> matrix = generateMatrix(rows, cols, -1000, 1000);
 
+    // Створює сокет для TCP з'єднання
     socket_t sockFd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockFd == INVALID_SOCKET) {
         std::cerr << "[client] socket creation failed" << std::endl;
@@ -85,6 +95,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Налаштовує адресу сервера
     sockaddr_in serverAddr{};
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(port);
@@ -102,6 +113,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Формує повідомлення з матрицею: розміри, кількість потоків та елементи матриці
     std::vector<std::uint8_t> dataPayload;
     dataPayload.reserve(sizeof(std::uint32_t) * 3 + matrix.size() * sizeof(std::int32_t));
     appendU32(dataPayload, rows);
@@ -111,6 +123,7 @@ int main(int argc, char** argv) {
         appendI32(dataPayload, value);
     }
 
+    // Відправляє матрицю на сервер
     if (!sendMessage(sockFd, MSG_DATA, dataPayload.data(), static_cast<std::uint32_t>(dataPayload.size()))) {
         std::cerr << "[client] failed to send DATA" << std::endl;
         closeSocket(sockFd);
@@ -118,6 +131,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Чекає на підтвердження від сервера
     std::vector<std::uint8_t> payload;
     if (!recvExpected(sockFd, MSG_DATA_OK, payload)) {
         closeSocket(sockFd);
@@ -125,6 +139,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Відправляє команду запуску обробки
     if (!sendMessage(sockFd, MSG_START, nullptr, 0)) {
         std::cerr << "[client] failed to send START" << std::endl;
         closeSocket(sockFd);
@@ -132,12 +147,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Чекає на підтвердження запуску
     if (!recvExpected(sockFd, MSG_START_OK, payload)) {
         closeSocket(sockFd);
         WSACleanup();
         return 1;
     }
 
+    // Циклічно запитує статус обробки поки вона не завершиться
     while (true) {
         if (!sendMessage(sockFd, MSG_STATUS, nullptr, 0)) {
             std::cerr << "[client] failed to send STATUS" << std::endl;
@@ -148,6 +165,7 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // Розпаковує відповідь: статус, мінімум, максимум, код помилки
         std::size_t offset = 0;
         std::uint32_t status = 0;
         std::int32_t minValue = 0;
@@ -159,6 +177,7 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // Перевіряє статус: завершено, помилка або продовжує очікування
         if (status == STATUS_DONE) {
             std::cout << "[client] result: min=" << minValue << ", max=" << maxValue << std::endl;
             break;
@@ -172,6 +191,7 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    // Закриває з'єднання та очищає ресурси Windows Sockets
     closeSocket(sockFd);
     WSACleanup();
     return 0;

@@ -10,32 +10,39 @@ import (
 	"time"
 )
 
+// Константи протоколу мережевої комунікації
 const (
-	magic   uint32 = 0x4D4D5831
-	version uint16 = 1
+	magic   uint32 = 0x4D4D5831 // Магічне число для валідації протоколу
+	version uint16 = 1           // Версія протоколу
 
-	MSG_DATA        uint16 = 1
-	MSG_START       uint16 = 2
-	MSG_STATUS      uint16 = 3
-	MSG_DATA_OK     uint16 = 101
-	MSG_START_OK    uint16 = 102
-	MSG_STATUS_RESP uint16 = 103
-	MSG_ERROR       uint16 = 200
+	// Типи повідомлень від клієнта
+	MSG_DATA        uint16 = 1   // Відправка матриці
+	MSG_START       uint16 = 2   // Команда запуску обробки
+	MSG_STATUS      uint16 = 3   // Запит статусу
 
-	STATUS_IDLE    uint32 = 0
-	STATUS_READY   uint32 = 1
-	STATUS_RUNNING uint32 = 2
-	STATUS_DONE    uint32 = 3
-	STATUS_ERROR   uint32 = 4
+	// Типи повідомлень від сервера
+	MSG_DATA_OK     uint16 = 101 // Підтвердження прийому матриці
+	MSG_START_OK    uint16 = 102 // Підтвердження запуску
+	MSG_STATUS_RESP uint16 = 103 // Відповідь на запит статусу
+	MSG_ERROR       uint16 = 200 // Помилка
+
+	// Коди статусу обробки
+	STATUS_IDLE    uint32 = 0 // Очікування
+	STATUS_READY   uint32 = 1 // Готово до обробки
+	STATUS_RUNNING uint32 = 2 // Обробка в процесі
+	STATUS_DONE    uint32 = 3 // Обробка завершена
+	STATUS_ERROR   uint32 = 4 // Помилка при обробці
 )
 
+// Заголовок повідомлення протоколу
 type MessageHeader struct {
-	Magic   uint32
-	Version uint16
-	Type    uint16
-	Length  uint32
+	Magic   uint32 // Магічне число
+	Version uint16 // Версія протоколу
+	Type    uint16 // Тип повідомлення
+	Length  uint32 // Розмір корисного навантаження
 }
 
+// Записує заголовок повідомлення у буфер у мережевому форматі (big-endian)
 func writeHeader(buf *bytes.Buffer, typ uint16, length uint32) {
 	binary.Write(buf, binary.BigEndian, magic)
 	binary.Write(buf, binary.BigEndian, version)
@@ -43,6 +50,7 @@ func writeHeader(buf *bytes.Buffer, typ uint16, length uint32) {
 	binary.Write(buf, binary.BigEndian, length)
 }
 
+// Відправляє усі дані через мережу, обробляючи часткові відправлення
 func sendAll(conn net.Conn, data []byte) error {
 	total := 0
 	for total < len(data) {
@@ -55,6 +63,7 @@ func sendAll(conn net.Conn, data []byte) error {
 	return nil
 }
 
+// Отримує задану кількість байтів з мережи, обробляючи часткові прийоми
 func recvAll(conn net.Conn, size int) ([]byte, error) {
 	buf := make([]byte, size)
 	total := 0
@@ -68,6 +77,7 @@ func recvAll(conn net.Conn, size int) ([]byte, error) {
 	return buf, nil
 }
 
+// Формує та відправляє повідомлення з матрицею (розміри, потоки, елементи)
 func sendData(conn net.Conn, rows, cols, numThreads uint32, matrix []int32) error {
 	buf := &bytes.Buffer{}
 	writeHeader(buf, MSG_DATA, uint32(12+4*len(matrix)))
@@ -80,12 +90,14 @@ func sendData(conn net.Conn, rows, cols, numThreads uint32, matrix []int32) erro
 	return sendAll(conn, buf.Bytes())
 }
 
+// Відправляє просте повідомлення без корисного навантаження
 func sendSimple(conn net.Conn, typ uint16) error {
 	buf := &bytes.Buffer{}
 	writeHeader(buf, typ, 0)
 	return sendAll(conn, buf.Bytes())
 }
 
+// Отримує та парсить заголовок повідомлення
 func recvHeader(conn net.Conn) (MessageHeader, error) {
 	hdr := MessageHeader{}
 	data, err := recvAll(conn, 12)
@@ -101,18 +113,21 @@ func recvHeader(conn net.Conn) (MessageHeader, error) {
 }
 
 func main() {
+	// Встановлює параметри підключення та обробки
 	host := "127.0.0.1"
 	port := 5000
 	rows := uint32(100)
 	cols := uint32(100)
 	threads := uint32(4)
 
+	// Генерує матрицю зі випадковими числами в діапазоні [-1000, 1000]
 	matrix := make([]int32, int(rows*cols))
 	rand.Seed(time.Now().UnixNano())
 	for i := range matrix {
 		matrix[i] = rand.Int31n(2001) - 1000
 	}
 
+	// Підключається до сервера
 	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -121,10 +136,12 @@ func main() {
 	}
 	defer conn.Close()
 
+	// Відправляє матрицю на сервер
 	if err := sendData(conn, rows, cols, threads, matrix); err != nil {
 		fmt.Println("[go-client] send DATA error:", err)
 		return
 	}
+	// Отримує підтвердження прийому матриці
 	hdr, err := recvHeader(conn)
 	if err != nil {
 		fmt.Println("[go-client] recv DATA_OK error:", err)
@@ -140,10 +157,12 @@ func main() {
 		return
 	}
 
+	// Відправляє команду запуску обробки
 	if err := sendSimple(conn, MSG_START); err != nil {
 		fmt.Println("[go-client] send START error:", err)
 		return
 	}
+	// Отримує підтвердження запуску
 	hdr, err = recvHeader(conn)
 	if err != nil {
 		fmt.Println("[go-client] recv START_OK error:", err)
@@ -154,11 +173,13 @@ func main() {
 		return
 	}
 
+	// Циклічно запитує статус обробки поки вона не завершиться
 	for {
 		if err := sendSimple(conn, MSG_STATUS); err != nil {
 			fmt.Println("[go-client] send STATUS error:", err)
 			return
 		}
+		// Отримує відповідь на запит статусу
 		hdr, err := recvHeader(conn)
 		if err != nil {
 			fmt.Println("[go-client] recv STATUS_RESP error:", err)
@@ -173,6 +194,7 @@ func main() {
 			fmt.Println("[go-client] unexpected STATUS_RESP resp:", hdr.Type)
 			return
 		}
+		// Парсить корисне навантаження: статус, мін, макс, код помилки
 		payload, err := recvAll(conn, int(hdr.Length))
 		if err != nil {
 			fmt.Println("[go-client] recv STATUS_RESP payload error:", err)
@@ -186,6 +208,7 @@ func main() {
 		min := int32(binary.BigEndian.Uint32(payload[4:8]))
 		max := int32(binary.BigEndian.Uint32(payload[8:12]))
 		errCode := binary.BigEndian.Uint32(payload[12:16])
+		// Перевіряє статус: завершено, помилка або продовжує очікування
 		if status == STATUS_DONE {
 			fmt.Printf("[go-client] result: min=%d, max=%d\n", min, max)
 			break
